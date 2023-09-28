@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -82,7 +83,8 @@ std::ostream& operator<<(std::ostream& os, const Ieee80211MgmtSta::ApInfo& ap)
        << " beaconIntvl=" << ap.beaconInterval
        << " rxPower=" << ap.rxPower
        << " authSeqExpected=" << ap.authSeqExpected
-       << " isAuthenticated=" << ap.isAuthenticated;
+       << " isAuthenticated=" << ap.isAuthenticated
+       << " numAssocSta=" << ap.numAssocSta; // #3.15 BSS Load
     return os;
 }
 
@@ -109,6 +111,7 @@ void Ieee80211MgmtSta::initialize(int stage)
         isScanning = false;
         assocTimeoutMsg = nullptr;
         numChannels = par("numChannels");
+        enableFils = par("enableFils");
 
         host = getContainingNode(this);
 
@@ -117,6 +120,14 @@ void Ieee80211MgmtSta::initialize(int stage)
         WATCH(scanning);
         WATCH(assocAP);
         WATCH_LIST(apList);
+
+        myIface = nullptr;
+    }
+    else if (stage == INITSTAGE_LINK_LAYER) {
+        IInterfaceTable *ift = findModuleFromPar<IInterfaceTable>(par("interfaceTableModule"), this);
+        if (ift) {
+            myIface = getContainingNicModule(this);
+        }
     }
 }
 
@@ -146,11 +157,14 @@ void Ieee80211MgmtSta::handleTimer(cMessage *msg)
         delete msg;
     }
     else if (msg->getKind() == MK_SCAN_SENDPROBE) {
+        isProbeDelay = false;        
         // Active Scan: send a probe request, then wait for minChannelTime (11.1.3.2.2)
         delete msg;
-        sendProbeRequest();
-        cMessage *timerMsg = new cMessage("minChannelTime", MK_SCAN_MINCHANNELTIME);
-        scheduleAt(simTime() + scanning.minChannelTime, timerMsg);    //XXX actually, we should start waiting after ProbeReq actually got transmitted
+        sendProbeRequest(SNDTYPE_UNICAST);
+
+        minChannelTime = new cMessage("minChannelTime", MK_SCAN_MINCHANNELTIME);
+        scheduleAt(simTime() + scanning.minChannelTime, minChannelTime);    //XXX actually, we should start waiting after ProbeReq actually got transmitted
+        isProbeDefer = false;
     }
     else if (msg->getKind() == MK_SCAN_MINCHANNELTIME) {
         // Active Scan: after minChannelTime, possibly listen for the remaining time until maxChannelTime
@@ -229,6 +243,7 @@ void Ieee80211MgmtSta::changeChannel(int channelNum)
 void Ieee80211MgmtSta::beaconLost()
 {
     EV << "Missed a few consecutive beacons -- AP is considered lost\n";
+    emit(beaconLostTimeSignal, simTime()); //histogram
     emit(l2BeaconLostSignal, myIface);
 }
 
@@ -255,8 +270,23 @@ void Ieee80211MgmtSta::startAuthentication(ApInfo *ap, simtime_t timeout)
     // create and send first authentication frame
     const auto& body = makeShared<Ieee80211AuthenticationFrame>();
     body->setSequenceNumber(1);
+    body->setEnableFils(enableFils & ap->enableFils);
+    EV << "enableFils:" << enableFils << ", ap->enableFils:" << ap->enableFils << ", body->getEnableFils():" << body->getEnableFils() << endl;
+    body->setAuthTime(simTime());   // for histogram
+    if (body->getEnableFils()) {
+        body->setChunkLength(B(2 + 2 + 2 + 81 )); //81:FILS
+        emit(enableFilsSignal, myIface);
+    }
     //XXX frame length could be increased to account for challenge text length etc.
     sendManagementFrame("Auth", body, ST_AUTHENTICATION, ap->address);
+
+//### log
+//        std::ostringstream str;
+//        str << "[00]SendAuthReq";
+//        recordScalar(str.str().c_str(), simTime());
+//    emit(authStartTimeSignal, simTime()); //histogram
+
+//###
 
     ap->authSeqExpected = 2;
 
@@ -283,8 +313,14 @@ void Ieee80211MgmtSta::startAssociation(ApInfo *ap, simtime_t timeout)
     //XXX set the following too?
     // string SSID
     // Ieee80211SupportedRatesElement supportedRates;
+    int addBytes=0;
+    body->setEnableFils(enableFils & ap->enableFils);
+    if (body->getEnableFils()) {
+        addBytes += 43;
+    }
 
-    body->setChunkLength(B(2 + 2 + strlen(body->getSSID()) + 2 + body->getSupportedRates().numRates + 2));
+    body->setChunkLength(B(2 + 2 + strlen(body->getSSID()) + 2 + body->getSupportedRates().numRates + 2 + addBytes));
+
     sendManagementFrame("Assoc", body, ST_ASSOCIATIONREQUEST, ap->address);
 
     // schedule timeout
@@ -334,6 +370,7 @@ void Ieee80211MgmtSta::processScanCommand(Ieee80211Prim_ScanRequest *ctrl)
     scanning.channelList.clear();
     scanning.minChannelTime = ctrl->getMinChannelTime();
     scanning.maxChannelTime = ctrl->getMaxChannelTime();
+    scanning.defaultSSID = ctrl->getDefaultSSID();
     ASSERT(scanning.minChannelTime <= scanning.maxChannelTime);
 
     // channel list to scan (default: all channels)
@@ -346,7 +383,10 @@ void Ieee80211MgmtSta::processScanCommand(Ieee80211Prim_ScanRequest *ctrl)
 
     // start scanning
     if (scanning.activeScan)
+    {
+        host->unsubscribe(IRadio::receptionStateChangedSignal, this);
         host->subscribe(IRadio::receptionStateChangedSignal, this);
+    }
     scanning.currentChannelIndex = -1;    // so we'll start with index==0
     isScanning = true;
     scanNextChannel();
@@ -371,7 +411,11 @@ bool Ieee80211MgmtSta::scanNextChannel()
     if (scanning.activeScan) {
         // Active Scan: first wait probeDelay, then send a probe. Listening
         // for minChannelTime or maxChannelTime takes place after that. (11.1.3.2)
-        scheduleAt(simTime() + scanning.probeDelay, new cMessage("sendProbe", MK_SCAN_SENDPROBE));
+        if(!isProbeDefer) {
+            uniProbeReq = new cMessage("sendProbe", MK_SCAN_SENDPROBE);
+            isProbeDelay = true; // refer at scanFonfirmSsidChk()
+            scheduleAt(simTime() + scanning.probeDelay, uniProbeReq);
+        }
     }
     else {
         // Passive Scan: spend maxChannelTime on the channel (11.1.3.1)
@@ -382,13 +426,18 @@ bool Ieee80211MgmtSta::scanNextChannel()
     return false;
 }
 
-void Ieee80211MgmtSta::sendProbeRequest()
+void Ieee80211MgmtSta::sendProbeRequest(Ieee80211SendType sendType)
 {
-    EV << "Sending Probe Request, BSSID=" << scanning.bssid << ", SSID=\"" << scanning.ssid << "\"\n";
-    const auto& body = makeShared<Ieee80211ProbeRequestFrame>();
-    body->setSSID(scanning.ssid.c_str());
-    body->setChunkLength(B((2 + scanning.ssid.length()) + (2 + body->getSupportedRates().numRates)));
-    sendManagementFrame("ProbeReq", body, ST_PROBEREQUEST, scanning.bssid);
+    if(sendType == SNDTYPE_UNICAST)
+    {
+        EV << "Sending Probe Request, BSSID=" << scanning.bssid << ", SSID=\"" << scanning.ssid << "\"\n";
+        const auto& body = makeShared<Ieee80211ProbeRequestFrame>();
+        body->setSSID(scanning.ssid.c_str());
+        body->setChunkLength(B((2 + scanning.ssid.length()) + (2 + body->getSupportedRates().numRates)));
+
+        sendManagementFrame("ProbeReq", body, ST_PROBEREQUEST, scanning.bssid);
+    }
+
 }
 
 void Ieee80211MgmtSta::sendScanConfirm()
@@ -403,6 +452,12 @@ void Ieee80211MgmtSta::sendScanConfirm()
     //XXX filter for req'd bssid and ssid
     for (int i = 0; i < n; i++, it++) {
         ApInfo *ap = &(*it);
+        EV << "ap:"<<ap->address<<" isAuthenticated=" << ap->isAuthenticated <<"\n";
+        EV << "ap:"<<ap->address<<" authTimeoutMsg=" << ap->authTimeoutMsg <<"\n";
+        if((ap->isAuthenticated) || (ap->authTimeoutMsg)) {
+            EV << "Cancel sendScanConfirm, already start Authentication by Another AP:" << ap->address << "\n";
+            return;
+        }
         Ieee80211Prim_BssDescription& bss = confirm->getBssListForUpdate(i);
         bss.setChannelNumber(ap->channel);
         bss.setBSSID(ap->address);
@@ -410,13 +465,21 @@ void Ieee80211MgmtSta::sendScanConfirm()
         bss.setSupportedRates(ap->supportedRates);
         bss.setBeaconInterval(ap->beaconInterval);
         bss.setRxPower(ap->rxPower);
+        bss.setTxPower(ap->txPower);
+        bss.setNumAssocSta(ap->numAssocSta);
     }
+    //fils test from
+    isScanning = false;
+    if (scanning.activeScan)
+        host->unsubscribe(IRadio::receptionStateChangedSignal, this);
+    //fils test to
     sendConfirm(confirm, PRC_SUCCESS);
 }
 
 void Ieee80211MgmtSta::processAuthenticateCommand(Ieee80211Prim_AuthenticateRequest *ctrl)
 {
     const MacAddress& address = ctrl->getAddress();
+    EV << "STA Ieee80211MgmtSt_processAuthenticateCommand " << simTime() << " " << address << "\n";
     ApInfo *ap = lookupAP(address);
     if (!ap)
         throw cRuntimeError("processAuthenticateCommand: AP not known: address = %s", address.str().c_str());
@@ -659,7 +722,13 @@ void Ieee80211MgmtSta::handleAssociationResponseFrame(Packet *packet, const Ptr<
     }
     else {
         EV << "Association successful, AP address=" << ap->address << "\n";
-
+//### log
+//        std::ostringstream str;
+//        str << "[02]RcvAssocRes";
+//        recordScalar(str.str().c_str(), simTime());
+        emit(assocDuringTimeSignal, simTime()-responseBody->getAuthTime()); //histogram
+        emit(assocFinishTimeSignal, simTime()); //histogram
+//###
         // change our state to "associated"
         mib->bssData.ssid = ap->ssid;
         mib->bssData.bssid = ap->address;
@@ -713,7 +782,7 @@ void Ieee80211MgmtSta::handleBeaconFrame(Packet *packet, const Ptr<const Ieee802
 {
     EV << "Received Beacon frame\n";
     const auto& beaconBody = packet->peekData<Ieee80211BeaconFrame>();
-    storeAPInfo(packet, header, beaconBody);
+    storeAPInfo(packet, header, beaconBody, 0);//no overwriteEnableFils
 
     // if it is out associate AP, restart beacon timeout
     if (mib->bssStationData.isAssociated && header->getTransmitterAddress() == assocAP.address) {
@@ -726,6 +795,19 @@ void Ieee80211MgmtSta::handleBeaconFrame(Packet *packet, const Ptr<const Ieee802
         //ASSERT(ap!=nullptr);
     }
 
+    // if Probe Reqeust deferral, sent SCanConfirm
+    if (isProbeDefer)
+    {
+        EV << "Start SCanConfirm Process by Beacon\n";
+        sendScanConfirm(); // send back response to agents' "scan" command
+    }
+    else
+    {
+        if (scanning.activeScan) {
+            /* [1]3.3 FILS Discovery */
+            scanConfirmSsidChk(beaconBody->getSSID());
+        }
+    }
     delete packet;
 }
 
@@ -738,18 +820,62 @@ void Ieee80211MgmtSta::handleProbeResponseFrame(Packet *packet, const Ptr<const 
 {
     EV << "Received Probe Response frame\n";
     const auto& probeResponseBody = packet->peekData<Ieee80211ProbeResponseFrame>();
-    storeAPInfo(packet, header, probeResponseBody);
+    //do not overwrite enableFils
+    storeAPInfo(packet, header, probeResponseBody, 1);//skip overwrite enableFils
+
+    /* [1]3.3 FILS Discovery */
+    scanConfirmSsidChk(probeResponseBody->getSSID());
+
     delete packet;
 }
 
-void Ieee80211MgmtSta::storeAPInfo(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header, const Ptr<const Ieee80211BeaconFrame>& body)
+void Ieee80211MgmtSta::scanConfirmSsidChk(std::string ssid)
+{
+    if ( (true == isProbeDelay) && (true == isScanning) ) {
+        EV << "STA is in probeDelay, no SSID check" << endl;
+    } else { /* after probeDelay */
+        if (ssid == scanning.defaultSSID) {
+            EV << "STA:Scan complete:FILS Discovery SSID == defaultSSID:" << ssid << endl;
+            sendScanConfirm();
+        }
+    }
+}
+
+void Ieee80211MgmtSta::handleFilsDiscoveryFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header)
+{
+    if (scanning.activeScan && enableFils ) {
+        EV << "STA:Received FILS Discovery frame" << endl;
+        const auto& filsDiscoveryBody = packet->peekData<Ieee80211FilsDiscoveryFrame>();
+        scanConfirmSsidChk(filsDiscoveryBody->getSSID());
+    }
+    delete packet;
+}
+
+void Ieee80211MgmtSta::storeAPInfoFd(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header, const Ptr<const Ieee80211FilsDiscoveryFrame>& body)
 {
     auto address = header->getTransmitterAddress();
     ApInfo *ap = lookupAP(address);
     if (ap) {
         EV << "AP address=" << address << ", SSID=" << body->getSSID() << " already in our AP list, refreshing the info\n";
+    } else {
+        EV << "Inserting AP address=" << address << ", SSID=" << body->getSSID() << " into our AP list\n";
+        apList.push_back(ApInfo());
+        ap = &apList.back();
     }
-    else {
+    ap->address = address;
+    ap->ssid = body->getSSID();
+    EV << "FILS Discovery:SSID:" << ap->ssid << endl;
+    ap->beaconInterval = body->getBeaconInterval();
+    ap->enableFils = 1;
+}
+
+void Ieee80211MgmtSta::storeAPInfo(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header, const Ptr<const Ieee80211BeaconFrame>& body, int overwriteEnableFils)
+{
+    auto address = header->getTransmitterAddress();
+    ApInfo *ap = lookupAP(address);
+    if (ap) {
+        EV << "AP address=" << address << ", SSID=" << body->getSSID() << " already in our AP list, refreshing the info\n";
+    } else {
         EV << "Inserting AP address=" << address << ", SSID=" << body->getSSID() << " into our AP list\n";
         apList.push_back(ApInfo());
         ap = &apList.back();
@@ -766,6 +892,23 @@ void Ieee80211MgmtSta::storeAPInfo(Packet *packet, const Ptr<const Ieee80211Mgmt
         if (ap->address == assocAP.address)
             assocAP.rxPower = ap->rxPower;
     }
+    if (0 == overwriteEnableFils) {
+        ap->enableFils = body->getEnableFils();
+    }
+    EV << "storeAPInfo:ap->enableFils:" << ap->enableFils << endl;
+}
+
+void Ieee80211MgmtSta::processFrame(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& header)
+{
+    switch (header->getType()) {
+        case ST_ACTION:
+            handleFilsDiscoveryFrame(packet, dynamicPtrCast<const Ieee80211MgmtHeader>(header));
+            return;
+            break;
+        default:
+            break;
+    }
+    Ieee80211MgmtBase::processFrame(packet, header);
 }
 
 } // namespace ieee80211

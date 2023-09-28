@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -49,7 +50,8 @@ class INET_API Ieee80211AgentSta : public cSimpleModule, public cListener       
     simtime_t maxChannelTime;
     simtime_t authenticationTimeout;
     simtime_t associationTimeout;
-
+    unsigned short threshNumAssocSta;
+    
     std::string defaultSsid;
 
     //Statistics:

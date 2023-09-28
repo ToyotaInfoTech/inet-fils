@@ -1,6 +1,8 @@
 //
 // Copyright (C) OpenSim Ltd.
 // Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
+//
+// This program is based on "src/inet/node/wireless/AccessPoint.ned".
 // 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -16,21 +18,23 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 //
 
-package inet.node.wireless;
+//package inet.node.wireless;
 
-import inet.applications.contract.IApp;
-import inet.common.MessageDispatcher;
-import inet.common.lifecycle.NodeStatus;
-import inet.common.packet.recorder.PcapRecorder;
+//import inet.applications.contract.IApp;
+//import inet.common.MessageDispatcher;
+//import inet.common.lifecycle.NodeStatus;
+//import inet.common.packet.recorder.PcapRecorder;
 import inet.linklayer.contract.IEthernetInterface;
 import inet.linklayer.contract.IMacAddressTable;
 import inet.linklayer.contract.IMacRelayUnit;
 import inet.linklayer.contract.IWirelessInterface;
 import inet.mobility.contract.IMobility;
 import inet.networklayer.common.InterfaceTable;
-import inet.networklayer.ipv4.Ipv4NetworkLayer;
-import inet.networklayer.contract.INetworkLayer;
+//import inet.networklayer.ipv4.Ipv4NetworkLayer;
+//import inet.networklayer.contract.INetworkLayer;
 
+//FILS
+package inet.node.inet;
 
 //
 // A generic access point supporting multiple wireless radios, and
@@ -47,39 +51,25 @@ import inet.networklayer.contract.INetworkLayer;
 // In this case, nodes must explicitly specify the hardware address
 // of the wlan card they want to be associated with.
 //
-module AccessPoint
+module AccessPointFils extends StandardHost
 {
     parameters:
         @networkNode();
         @labels(node,ethernet-node,wireless-node);
         @display("i=device/accesspoint");
-        int numWlanInterfaces = default(1);               // the number of radios in the access point
-        int numPcapRecorderes = default(0);               // the number of pcap recorders in the access point
-        bool hasStatus = default(false);
+        numWlanInterfaces = default(1);
         wlan[*].mgmt.typename = default("Ieee80211MgmtAp");
         wlan[*].llc.typename = default("Ieee80211Portal");
         wlan[*].agent.typename = default("");
         wlan[*].radio.antenna.mobilityModule = default("^.^.^.mobility");
-        eth[*].encap.typename = "EtherEncapDummy";
+        wlan[*].mgmt.filsWrappedDataLen = default(8);
+        //eth[*].encap.typename = default("EtherEncapDummy");//FILS: comment out when the AP has application layer
         *.interfaceTableModule = default(absPath(".interfaceTable"));
         relayUnit.hasStp = false;
-    gates:
-        input radioIn[numWlanInterfaces] @directIn;
-        inout ethg[] @labels(EtherFrame-conn);
+    //gates:
+    //    input radioIn[numWlanInterfaces] @directIn;
+    //    inout ethg[] @labels(EtherFrame-conn);
     submodules:
-        status: NodeStatus if hasStatus {
-            parameters:
-                @display("p=100,100;is=s");
-        }
-
-        interfaceTable: InterfaceTable {
-            parameters:
-                @display("p=100,200;is=s");
-        }
-        mobility: <default("StationaryMobility")> like IMobility {
-            parameters:
-                @display("p=100,400;is=s");
-        }
         macTable: <default("MacAddressTable")> like IMacAddressTable {
             parameters:
                 @display("p=100,300;is=s");
@@ -88,46 +78,9 @@ module AccessPoint
             parameters:
                 @display("p=579,331");
         }
-        nl: MessageDispatcher if sizeof(ethg)+numWlanInterfaces > 1 && exists(relayUnit) {
-            parameters:
-                @display("p=800,200;b=1200,5,,,,1");
-        }
-        wlan[numWlanInterfaces]: <default("Ieee80211Interface")> like IWirelessInterface {
-            parameters:
-                @display("p=250,300,row,150;q=queue");
-        }
-        eth[sizeof(ethg)]: <default("EthernetInterface")> like IEthernetInterface {
-            parameters:
-                mac.promiscuous = true;
-                @display("p=850,300,row;q=txQueue");
-        }
-        ipv4: <default("Ipv4NetworkLayer")> like INetworkLayer {
-            @display("p=250,125");
-        }
 
-        pcapRecorder[numPcapRecorderes]: PcapRecorder {
-            @display("p=93,472");
-        }
     connections allowunconnected:
         nl.out++ --> relayUnit.ifIn if sizeof(ethg)+numWlanInterfaces > 1 && exists(relayUnit);
         nl.in++ <-- relayUnit.ifOut if sizeof(ethg)+numWlanInterfaces > 1 && exists(relayUnit);
-        // connections to network outside
-        // wireless interfaces MUST be connected first (i.e. ports 0..numWlanInterfaces-1)
-        // because broadcasts must be handled differently for wireless IFs by the relayUnit
-        for i=0..numWlanInterfaces-1 {
-            radioIn[i] --> { @display("m=s"); } --> wlan[i].radioIn;
-            wlan[i].upperLayerOut --> nl.in++ if sizeof(ethg)+numWlanInterfaces > 1 && exists(relayUnit);
-            wlan[i].upperLayerIn <-- nl.out++ if sizeof(ethg)+numWlanInterfaces > 1 && exists(relayUnit);
-        }
-        // ethernet must be connected only AFTER wireless ports
-        for i=0..sizeof(ethg)-1 {
-            eth[i].phys <--> { @display("m=s"); } <--> ethg[i];
-            eth[i].upperLayerIn <-- nl.out++ if sizeof(ethg)+numWlanInterfaces>1;
-            eth[i].upperLayerOut --> nl.in++ if sizeof(ethg)+numWlanInterfaces>1;
-        }
-
-
-        ipv4.ifIn <-- nl.out++;
-        ipv4.ifOut --> nl.in++;
 }
 

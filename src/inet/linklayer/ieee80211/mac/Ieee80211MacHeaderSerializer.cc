@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2014 OpenSim Ltd.
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -92,6 +93,7 @@ Register_Serializer(Ieee80211ActionFrame, Ieee80211MacHeaderSerializer);
 Register_Serializer(Ieee80211AddbaRequest, Ieee80211MacHeaderSerializer);
 Register_Serializer(Ieee80211AddbaResponse, Ieee80211MacHeaderSerializer);
 Register_Serializer(Ieee80211Delba, Ieee80211MacHeaderSerializer);
+//Register_Serializer(Ieee80211FilsDiscovery, Ieee80211MacHeaderSerializer);
 
 Register_Serializer(Ieee80211MacTrailer, Ieee80211MacTrailerSerializer);
 
@@ -136,6 +138,11 @@ const Ptr<Chunk> Ieee80211MpduSubframeHeaderSerializer::deserialize(MemoryInputS
 
 void Ieee80211MacHeaderSerializer::serialize(MemoryOutputStream& stream, const Ptr<const Chunk>& chunk) const
 {
+    EV << "Ieee80211MacHeaderSerializer::serialize" << endl;
+    //FILS test
+    EV << "MacHeader:Serializer:Ieee80211FilsDiscovery:chunk:" << chunk << endl;
+    //throw cRuntimeError("Ieee80211MacHeaderSerializer:STOP AT SERIALIZE");
+
     B startPos = stream.getLength();
     auto macHeader = dynamicPtrCast<const Ieee80211MacHeader>(chunk);
     stream.writeUint4(macHeader->getSubType());
@@ -150,6 +157,11 @@ void Ieee80211MacHeaderSerializer::serialize(MemoryOutputStream& stream, const P
     stream.writeBit(macHeader->getFromDS());
     stream.writeBit(macHeader->getToDS());
     Ieee80211FrameType type = macHeader->getType();
+    //if (type == ST_ACTION) {
+    //    EV << "Ieee80211MacHeaderSerializer::serialize:ST_ACTION:" << endl;
+    //    return;
+    //}
+
     switch (type) {
         case ST_ASSOCIATIONREQUEST:
         case ST_ASSOCIATIONRESPONSE:
@@ -163,7 +175,12 @@ void Ieee80211MacHeaderSerializer::serialize(MemoryOutputStream& stream, const P
         case ST_AUTHENTICATION:
         case ST_DEAUTHENTICATION:
         case ST_ACTION:
-        case ST_NOACKACTION: {
+        case ST_NOACKACTION:
+        case ST_FILS_AUTH_REQ:
+        case ST_FILS_AUTH_RESP:
+        case ST_FILS_ASSOC_REQ:
+        case ST_FILS_ASSOC_RESP:
+        {
             auto mgmtHeader = dynamicPtrCast<const Ieee80211MgmtHeader>(chunk);
             stream.writeUint16Le(mgmtHeader->getDurationField().inUnit(SIMTIME_US));
             stream.writeMacAddress(mgmtHeader->getReceiverAddress());
@@ -171,10 +188,17 @@ void Ieee80211MacHeaderSerializer::serialize(MemoryOutputStream& stream, const P
             stream.writeMacAddress(mgmtHeader->getAddress3());
             stream.writeUint4(mgmtHeader->getFragmentNumber());
             stream.writeNBitsOfUint64Be(mgmtHeader->getSequenceNumber().getRaw(), 12);
+
             if (mgmtHeader->getOrder())
                 stream.writeUint32Be(0);
             if (type == ST_ACTION) {
                 auto actionFrame = dynamicPtrCast<const Ieee80211ActionFrame>(chunk);
+                EV << "MacHeader:Serializer:chunk:" << chunk << ", actionFrame:" << actionFrame << endl;
+                //throw cRuntimeError("4_Ieee80211MacHeaderSerializer:STOP AT SERIALIZE");
+                if (actionFrame == nullptr) {
+                    EV << "FILS Discovery no additional elements" << endl;
+                    break;
+                }
                 switch (actionFrame->getCategory()) {
                     case 3: {
                         stream.writeByte(actionFrame->getCategory());
@@ -221,6 +245,7 @@ void Ieee80211MacHeaderSerializer::serialize(MemoryOutputStream& stream, const P
                         }
                         break;
                     }
+
                     default:
                         throw cRuntimeError("Ieee80211MacHeaderSerializer: cannot serialize the Ieee80211ActionFrame frame, category %d not supported.", actionFrame->getCategory());
                 }

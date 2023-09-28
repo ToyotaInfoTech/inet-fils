@@ -1,6 +1,8 @@
 //
 // Copyright (C) OpenSim Ltd.
 // Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
+// 
+// This program is based on "src/inet/linklayer/ieee80211/portal/Ieee80211Portal.ned".
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -21,10 +23,11 @@ package inet.linklayer.ieee80211.portal;
 import inet.linklayer.ieee80211.llc.IIeee80211Llc;
 import inet.linklayer.ieee8022.IIeee8022Llc;
 
-simple Ieee80211Portal like IIeee8022Llc, IIeee80211Llc
+simple Ieee80211PortalFils like IIeee8022Llc, IIeee80211Llc
 {
     parameters:
         string fcsMode @enum("declared", "computed") = default("declared");
+        string interfaceTableModule;
         int appDestPort = default(0);
         @display("i=block/layer");
     gates:

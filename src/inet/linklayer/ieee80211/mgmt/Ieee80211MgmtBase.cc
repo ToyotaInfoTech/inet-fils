@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -57,7 +58,15 @@ void Ieee80211MgmtBase::handleMessageWhenUp(cMessage *msg)
         // process incoming frame
         EV << "Frame arrived from MAC: " << msg << "\n";
         auto packet = check_and_cast<Packet *>(msg);
-        const Ptr<const Ieee80211DataOrMgmtHeader>& header = packet->peekAt<Ieee80211DataOrMgmtHeader>(packet->getFrontOffset() - B(24));
+        //FILS
+        auto offset = packet->getFrontOffset();
+        if (offset >= B(24)){
+            offset -= B(24);
+        }else{
+            //FILS: no action
+        }
+        EV << "offset:" << packet->getFrontOffset() << "\n";
+        const Ptr<const Ieee80211DataOrMgmtHeader>& header = packet->peekAt<Ieee80211DataOrMgmtHeader>(offset);
         processFrame(packet, header);
     }
     else if (msg->arrivedOn("agentIn")) {

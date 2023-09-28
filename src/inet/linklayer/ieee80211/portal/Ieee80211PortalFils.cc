@@ -2,6 +2,8 @@
 // Copyright (C) OpenSim Ltd.
 // Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
+// This program is based on "src/inet/linklayer/ieee80211/portal/Ieee80211Portal.cc".
+//
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
 // as published by the Free Software Foundation; either version 2
@@ -22,12 +24,12 @@
 #include "inet/linklayer/common/MacAddressTag_m.h"
 
 #ifdef WITH_ETHERNET
-#include "inet/linklayer/ethernet/EtherEncap.h"
+#include "inet/linklayer/ethernet/EtherEncapFils.h"
 #include "inet/linklayer/ethernet/EtherPhyFrame_m.h"
 #endif // ifdef WITH_ETHERNET
 
 #include "inet/linklayer/ieee80211/mac/Ieee80211Frame_m.h"
-#include "inet/linklayer/ieee80211/portal/Ieee80211Portal.h"
+#include "inet/linklayer/ieee80211/portal/Ieee80211PortalFils.h"
 #include "inet/linklayer/ieee8022/Ieee8022LlcHeader_m.h"
 
 //FILS
@@ -39,15 +41,16 @@
 #include "inet/networklayer/common/L3AddressTag_m.h"
 #include "inet/common/checksum/TcpIpChecksum.h"
 #include "inet/transportlayer/udp/Udp.h"
-#include "inet/linklayer/common/InterfaceTag_m.h"
+#include "inet/common/ModuleAccess.h"
+#include "inet/networklayer/contract/IInterfaceTable.h"
 
 namespace inet {
 
 namespace ieee80211 {
 
-Define_Module(Ieee80211Portal);
+Define_Module(Ieee80211PortalFils);
 
-void Ieee80211Portal::initialize(int stage)
+void Ieee80211PortalFils::initialize(int stage)
 {
     if (stage == INITSTAGE_LOCAL) {
         upperLayerOutConnected = gate("upperLayerOut")->getPathEndGate()->isConnected();
@@ -57,7 +60,7 @@ void Ieee80211Portal::initialize(int stage)
     }
 }
 
-void Ieee80211Portal::handleMessage(cMessage *message)
+void Ieee80211PortalFils::handleMessage(cMessage *message)
 {
     EV << "Ieee80211Portal::handleMessage\n";
     if (message->arrivedOn("upperLayerIn")) {
@@ -96,13 +99,32 @@ void Ieee80211Portal::handleMessage(cMessage *message)
         throw cRuntimeError("Unknown message");
 }
 
-void Ieee80211Portal::encapsulate(Packet *packet)
+void Ieee80211PortalFils::encapsulate(Packet *packet)
 {
-    EV << "Ieee80211Portal::encapsulate\n";
+    EV << "Ieee80211Portal::encapsulate:" << packet->getFullName() << ", packet:" << packet << endl;
 #ifdef WITH_ETHERNET
-    auto ethernetHeader = EtherEncap::decapsulateMacHeader(packet);       // do not use const auto& : trimChunks() delete it from packet
+#if 1
+    if ((packet->getByteLength() != 64) && (packet->getByteLength() != 346)){ //not arpREPLY / FILS step2 no EthernetMacHeader
+        EV << "noEthMacHdr" << endl;
+        const auto& ieee8022SnapHeader = makeShared<Ieee8022LlcSnapHeader>();
+        ieee8022SnapHeader->setOui(0);
+        if (28 == packet->getByteLength() ) {
+            ieee8022SnapHeader->setProtocolId(ETHERTYPE_ARP);
+        } else {
+            ieee8022SnapHeader->setProtocolId(ETHERTYPE_IPv4);
+        }
+        EV << "etherType:" << ieee8022SnapHeader->getProtocolId() << endl;
+        packet->insertAtFront(ieee8022SnapHeader);
+        packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::ieee8022);
+        EV << "set packet:" << packet << endl;
+        return;
+    }
+#endif
+    EV << "before decapsulateMacHeader:" << packet << endl;
+    auto ethernetHeader = EtherEncapFils::decapsulateMacHeader(packet);       // do not use const auto& : trimChunks() delete it from packet
     packet->trim();
     packet->addTagIfAbsent<MacAddressReq>()->setDestAddress(ethernetHeader->getDest());
+    EV << "dest:" << ethernetHeader->getDest() << endl;
     packet->addTagIfAbsent<MacAddressReq>()->setSrcAddress(ethernetHeader->getSrc());
     if (isIeee8023Header(*ethernetHeader))
         // check that the packet already has an LLC header
@@ -121,7 +143,7 @@ void Ieee80211Portal::encapsulate(Packet *packet)
 #endif // ifdef WITH_ETHERNET
 }
 
-void Ieee80211Portal::decapsulate(Packet *packet)
+void Ieee80211PortalFils::decapsulate(Packet *packet)
 {
     EV << "Ieee80211Portal::decapsulate\n";
 #ifdef WITH_ETHERNET
@@ -138,6 +160,35 @@ void Ieee80211Portal::decapsulate(Packet *packet)
             packet->eraseAtFront(snapHeader->getChunkLength());
         }
     }
+#if 1 //FILS step2
+    //getInterfaceEntry of wlan0
+    if (nullptr == interfaceEntry) {
+        auto interfaceTable = getModuleFromPar<IInterfaceTable>(par("interfaceTableModule"), this);
+        auto interfaceName = "wlan0"; // fixed interface for response
+        cPatternMatcher interfaceMatcher(interfaceName, false, true, false);
+        for (int i = 0; i < interfaceTable->getNumInterfaces(); i++) {
+            interfaceEntry = interfaceTable->getInterface(i);
+            if (interfaceMatcher.matches(interfaceEntry->getInterfaceName())){
+                break;
+            }
+        }
+    }
+    //dest macAddr is wlan0
+    if (nullptr != interfaceEntry) {
+        EV << "interfaceEntry is not null" << endl;
+    }
+    EV << "wlan0_mac:" << interfaceEntry->getMacAddress();
+    EV << ", dest:" << packet->getTag<MacAddressInd>()->getDestAddress() << endl;
+    if (nullptr != interfaceEntry
+            && interfaceEntry->getMacAddress().equals(packet->getTag<MacAddressInd>()->getDestAddress()) ) {
+        EV << "set protocol:send to ip4 node in AP" << endl;
+        //send to ip4 node in AP
+        packet->addTagIfAbsent<DispatchProtocolReq>()->setProtocol(&Protocol::arp);
+        packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::arp);
+        packet->addTagIfAbsent<L3AddressReq>();
+        return;
+    }
+#endif
     const auto& ethernetHeader = makeShared<EthernetMacHeader>();
     ethernetHeader->setSrc(packet->getTag<MacAddressInd>()->getSrcAddress());
     ethernetHeader->setDest(packet->getTag<MacAddressInd>()->getDestAddress());
@@ -151,7 +202,7 @@ void Ieee80211Portal::decapsulate(Packet *packet)
 #endif // ifdef WITH_ETHERNET
 }
 
-void Ieee80211Portal::filsDecapsulate(Packet *packet)
+void Ieee80211PortalFils::filsDecapsulate(Packet *packet)
 {
     EV << "Ieee80211Portal::filsDecapsulate\n";
 #ifdef WITH_ETHERNET

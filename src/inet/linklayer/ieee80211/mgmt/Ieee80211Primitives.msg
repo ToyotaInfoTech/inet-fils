@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -82,6 +83,14 @@ enum Ieee80211PrimResultCode
     PRC_REFUSED = 4;
 }
 
+// frame send type
+// (targetframe:Probe Request/Response)
+enum Ieee80211SendType
+{
+    SNDTYPE_UNICAST = 0;
+    SNDTYPE_BROADCAST = 1;
+}
+
 //
 // Base class for request primitives
 //
@@ -110,6 +119,7 @@ class Ieee80211Prim_ScanRequest extends Ieee80211PrimRequest
     int channelList[]; // list of channels to scan (default: all channels)
     simtime_t minChannelTime; // minimum time to spend on each channel when scanning
     simtime_t maxChannelTime; // maximum time to spend on each channel when scanning
+    string defaultSSID;
 }
 
 class Ieee80211Prim_BssDescription extends cObject
@@ -121,6 +131,8 @@ class Ieee80211Prim_BssDescription extends cObject
     simtime_t beaconInterval;
 
     double rxPower; // received power from AP; not part of the standard
+    double txPower;
+    unsigned short numAssocSta;
 }
 
 //

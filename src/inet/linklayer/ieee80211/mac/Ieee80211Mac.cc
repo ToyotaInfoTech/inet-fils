@@ -1,4 +1,5 @@
 // Copyright (C) 2016 OpenSim Ltd.
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -132,14 +133,53 @@ void Ieee80211Mac::configureInterfaceEntry()
 
 void Ieee80211Mac::handleMessageWhenUp(cMessage *message)
 {
+    EV << "Ieee80211Mac::handleMessageWhenUp" << "\n";
     if (message->arrivedOn("mgmtIn")) {
         if (!message->isPacket())
-            handleUpperCommand(message);
-        else
+        {
+           handleUpperCommand(message);
+           return;
+        } else {
+            auto packet = check_and_cast<Packet *>(message);
+            //FILS
+            if ( packet->findTag<Ieee80211SubtypeReq>() ) {
+                auto subType = (Ieee80211FrameType)packet->getTag<Ieee80211SubtypeReq>()->getSubtype();
+                if ( (ST_FILS_AUTH_REQ == subType) || (ST_FILS_ASSOC_REQ == subType) ) {
+                    packet->addTagIfAbsent<InterfaceInd>()->setInterfaceId(interfaceEntry->getInterfaceId());
+                    auto length = packet->getTotalLength();
+                    EV << "payload length:" << length << "\n";
+                    if (length == b(-1)) {
+                        EV << "packet:" << packet << "\n";
+                    }
+                    sendUp(message);
+                    return;
+                }
+            }
             handleMgmtPacket(check_and_cast<Packet *>(message));
+            return;
+        }
+    } else if (message->arrivedOn("upperLayerIn")) { //FILS
+        auto packet = check_and_cast<Packet *>(message);
+        //FILS
+        if ( packet->findTag<Ieee80211SubtypeReq>() ) {
+            auto subType = (Ieee80211FrameType)packet->getTag<Ieee80211SubtypeReq>()->getSubtype();
+            if ( (ST_FILS_AUTH_RESP == subType) || (ST_FILS_ASSOC_RESP == subType) ) {
+                //handleMgmtPacket(packet) for FLIS
+                const auto& header = makeShared<Ieee80211MgmtHeader>();
+                header->setType((Ieee80211FrameType)packet->getTag<Ieee80211SubtypeReq>()->getSubtype());
+                header->setTransmitterAddress(packet->getTag<MacAddressReq>()->getDestAddress());
+                if (mib->mode == Ieee80211Mib::INFRASTRUCTURE && mib->bssStationData.stationType == Ieee80211Mib::ACCESS_POINT)
+                    header->setAddress3(mib->bssData.bssid);
+                packet->insertAtFront(header);
+                const auto& trailer = makeShared<Ieee80211MacTrailer>();
+                trailer->setFcsMode(FCS_COMPUTED);
+                packet->insertAtBack(trailer);
+                send(packet, "mgmtOut");
+                return;
+            }
+        }
     }
-    else
-        LayeredProtocolBase::handleMessageWhenUp(message);
+    LayeredProtocolBase::handleMessageWhenUp(message);
 }
 
 void Ieee80211Mac::handleSelfMessage(cMessage *msg)
@@ -149,6 +189,7 @@ void Ieee80211Mac::handleSelfMessage(cMessage *msg)
 
 void Ieee80211Mac::handleMgmtPacket(Packet *packet)
 {
+    EV << "Ieee80211Mac::handleMgmtPacket\n";
     const auto& header = makeShared<Ieee80211MgmtHeader>();
     header->setType((Ieee80211FrameType)packet->getTag<Ieee80211SubtypeReq>()->getSubtype());
     header->setReceiverAddress(packet->getTag<MacAddressReq>()->getDestAddress());
@@ -156,11 +197,16 @@ void Ieee80211Mac::handleMgmtPacket(Packet *packet)
         header->setAddress3(mib->bssData.bssid);
     packet->insertAtFront(header);
     packet->insertAtBack(makeShared<Ieee80211MacTrailer>());
+    //if (header->getSubType() == ST_ACTION) {
+    //    EV << "Ieee80211Mac::handleMgmtPacket:ST_ACTION:" << packet << endl;
+    //    return;
+    //}
     processUpperFrame(packet, header);
 }
 
 void Ieee80211Mac::handleUpperPacket(Packet *packet)
 {
+    EV << "Ieee80211Mac::handleUpperPacket:" << packet << endl;
     if (mib->mode == Ieee80211Mib::INFRASTRUCTURE && mib->bssStationData.stationType == Ieee80211Mib::STATION && !mib->bssStationData.isAssociated) {
         EV << "STA is not associated with an access point, discarding packet " << packet << "\n";
         PacketDropDetails details;
@@ -170,7 +216,9 @@ void Ieee80211Mac::handleUpperPacket(Packet *packet)
         return;
     }
     encapsulate(packet);
+    EV << "encap:packet:" << packet << endl;
     const auto& header = packet->peekAtFront<Ieee80211DataOrMgmtHeader>();
+    EV << "header:" << header << endl;
     if (mib->mode == Ieee80211Mib::INFRASTRUCTURE && mib->bssStationData.stationType == Ieee80211Mib::ACCESS_POINT) {
         auto receiverAddress = header->getReceiverAddress();
         if (!receiverAddress.isMulticast()) {
@@ -180,13 +228,14 @@ void Ieee80211Mac::handleUpperPacket(Packet *packet)
                 PacketDropDetails details;
                 details.setReason(OTHER_PACKET_DROP);
                 emit(packetDroppedSignal, packet, &details);
-                delete packet;
-                return;
+//                delete packet;
+//                return;
             }
         }
     }
     processUpperFrame(packet, header);
 }
+
 
 void Ieee80211Mac::handleLowerPacket(Packet *packet)
 {
@@ -204,6 +253,7 @@ void Ieee80211Mac::handleLowerPacket(Packet *packet)
 
 void Ieee80211Mac::handleUpperCommand(cMessage *msg)
 {
+    EV << "Ieee80211Mac::handleUpperCommand\n";
     if (msg->getKind() == RADIO_C_CONFIGURE) {
         EV_DEBUG << "Passing on command " << msg->getName() << " to physical layer\n";
         if (pendingRadioConfigMsg != nullptr) {
@@ -384,6 +434,10 @@ void Ieee80211Mac::processUpperFrame(Packet *packet, const Ptr<const Ieee80211Da
     take(packet);
     EV_INFO << "Frame " << packet << " received from higher layer, receiver = " << header->getReceiverAddress() << "\n";
     ASSERT(!header->getReceiverAddress().isUnspecified());
+
+    //FILS
+    EV << "Ieee80211Mac::processUpperFrame,packet:" << packet << ", Header:" << header << endl;
+
     if (mib->qos)
         hcf->processUpperFrame(packet, header);
     else

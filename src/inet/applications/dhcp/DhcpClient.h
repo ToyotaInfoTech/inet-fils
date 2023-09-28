@@ -2,6 +2,7 @@
 // Copyright (C) 2008 Juan-Carlos Maureira
 // Copyright (C) INRIA
 // Copyright (C) 2013 OpenSim Ltd.
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -79,6 +80,7 @@ class INET_API DhcpClient : public ApplicationBase, public cListener, public Udp
     static const char *getStateName(ClientState state);
     const char *getAndCheckMessageTypeName(DhcpMessageType type);
     virtual void refreshDisplay() const override;
+    virtual double responseTimeoutCal(void);
 
 
     /*

@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2005 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -83,7 +84,7 @@ simsignal_t isisAdjChangedSignal = cComponent::registerSignal("isisAdjChanged");
 //...
 
 // - layer 7 (application)
-//...
+simsignal_t enableFilsSignal = cComponent::registerSignal("enableFils");
 
 // general
 simsignal_t packetCreatedSignal = cComponent::registerSignal("packetCreated");

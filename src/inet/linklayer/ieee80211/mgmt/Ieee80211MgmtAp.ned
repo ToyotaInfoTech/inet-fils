@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -43,7 +44,27 @@ simple Ieee80211MgmtAp like IIeee80211Mgmt
     parameters:
         string ssid = default("SSID");
         double beaconInterval @unit(s) = default(100ms);
+        double filsDiscoveryInterval @unit(s) = default(20ms);
         int numAuthSteps = default(4); // use 2 for Open System auth, 4 for WEP
+        
+        int enableFils = default(0);
+        int filsWrappedDataLen = default(0);
+        int rsnGroupDataCipherSuite = default(0);
+    	int rsnPairwiseCipherSuiteCount = default(0);
+    	int rsnPairwiseCipherSuiteList = default(0);
+    	int rsnAkmSuiteCount = default(0);
+    	int rsnAkmSuiteList = default(0);
+    	int rsnCapabilities = default(0);
+    	int rsnPmkidCount = default(0);
+    	int rsnPmkidList = default(0);
+    	int rsnGroupManagementCipherSuite = default(0);
+    	int numUe = default(20);
+    	
+
+    	
+    	string wifiRouterRoutingTableModule = default("");	// router routing module
+    	string wifiRouterIfTableModule = default("");	// router interface module
+    
         //dataRate: numeric; XXX TBD
         string interfaceTableModule;
         string radioModule = default("^.radio");   // The path to the Radio module  //FIXME remove default value
@@ -52,6 +73,11 @@ simple Ieee80211MgmtAp like IIeee80211Mgmt
         @display("i=block/cogwheel");
         @signal[l2ApAssociated](type="inet::ieee80211::Ieee80211MgmtAp::NotificationInfoSta");
         @signal[l2ApDisassociated](type="inet::ieee80211::Ieee80211MgmtAp::NotificationInfoSta");
+        //Config histogram
+        @signal[assocTimes](type=simtime_t; unit=s);
+		@statistic[assocTimes](title="[00]AssociatedTimes_AP"; source=assocTimes; record=min,max,mean; interpolationmode=none);
+        
+        
     gates:
         input macIn @labels(Ieee80211MacHeader); // from ~Ieee80211Mac
         output macOut @labels(Ieee80211MacHeader); // to ~Ieee80211Mac

@@ -2,6 +2,8 @@
 // Copyright (C) OpenSim Ltd.
 // Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
+// This program is based on "src/inet/linklayer/ieee80211/portal/Ieee80211Portal.h".
+//
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
 // as published by the Free Software Foundation; either version 2
@@ -16,23 +18,26 @@
 // along with this program; if not, see http://www.gnu.org/licenses/.
 //
 
-#ifndef __INET_IEEE80211PORTAL_H
-#define __INET_IEEE80211PORTAL_H
+#ifndef __INET_IEEE80211PORTALFILS_H
+#define __INET_IEEE80211PORTALFILS_H
 
 #include "inet/common/Protocol.h"
 #include "inet/common/packet/Packet.h"
 #include "inet/linklayer/common/FcsMode_m.h"
 #include "inet/linklayer/ieee80211/llc/IIeee80211Llc.h"
+//FILS
+#include "inet/networklayer/contract/IInterfaceTable.h"
 
 namespace inet {
 
 namespace ieee80211 {
 
-class INET_API Ieee80211Portal : public cSimpleModule, public IIeee80211Llc
+class INET_API Ieee80211PortalFils : public cSimpleModule, public IIeee80211Llc
 {
   protected:
     FcsMode fcsMode = FCS_MODE_UNDEFINED;
     bool upperLayerOutConnected = false;
+    InterfaceEntry* interfaceEntry = nullptr;
 
   protected:
     virtual int numInitStages() const override { return NUM_INIT_STAGES; }
@@ -51,5 +56,5 @@ class INET_API Ieee80211Portal : public cSimpleModule, public IIeee80211Llc
 
 } // namespace inet
 
-#endif // __INET_IEEE80211PORTAL_H
+#endif // __INET_IEEE80211PORTALFILS_H
 

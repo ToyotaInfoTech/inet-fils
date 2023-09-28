@@ -1,5 +1,6 @@
 //
 // Copyright (C) OpenSim Ltd.
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -27,6 +28,7 @@ Register_Serializer(Ieee80211AssociationRequestFrame, Ieee80211MgmtFrameSerializ
 Register_Serializer(Ieee80211AssociationResponseFrame, Ieee80211MgmtFrameSerializer);
 Register_Serializer(Ieee80211AuthenticationFrame, Ieee80211MgmtFrameSerializer);
 Register_Serializer(Ieee80211BeaconFrame, Ieee80211MgmtFrameSerializer);
+Register_Serializer(Ieee80211FilsDiscoveryFrame, Ieee80211MgmtFrameSerializer);
 Register_Serializer(Ieee80211DeauthenticationFrame, Ieee80211MgmtFrameSerializer);
 Register_Serializer(Ieee80211DisassociationFrame, Ieee80211MgmtFrameSerializer);
 Register_Serializer(Ieee80211ProbeRequestFrame, Ieee80211MgmtFrameSerializer);
@@ -36,17 +38,31 @@ Register_Serializer(Ieee80211ReassociationResponseFrame, Ieee80211MgmtFrameSeria
 
 void Ieee80211MgmtFrameSerializer::serialize(MemoryOutputStream& stream, const Ptr<const Chunk>& chunk) const
 {
+    EV << "Ieee80211MgmtFrameSerializer::serialize:chunk:" << chunk << endl;
+
     if (auto authenticationFrame = dynamicPtrCast<const Ieee80211AuthenticationFrame>(chunk))
     {
         //type = ST_AUTHENTICATION;
         // 1    Authentication algorithm number
-        stream.writeUint16Be(0);
+        stream.writeUint16Be(4 * authenticationFrame->getEnableFils());
+        //4:FILS Shard Key authentication without PFS
+        //0:open system
+
         // 2    Authentication transaction sequence number
         stream.writeUint16Be(authenticationFrame->getSequenceNumber());
         // 3    Status code                                 The status code information is reserved in certain Authentication frames as defined in Table 7-17.
         stream.writeUint16Be(authenticationFrame->getStatusCode());
         // 4    Challenge text                              The challenge text information is present only in certain Authentication frames as defined in Table 7-17.
         // Last Vendor Specific                             One or more vendor-specific information elements may appear in this frame. This information element follows all other information elements.
+
+        //FILS:81 byte
+        if (authenticationFrame->getEnableFils()) {
+            for ( int i = 0; i <  (1 + 1 + 2 + 4 + 2 + 4  +  2 + 4 + 2 + 2 + 16 + 0)
+                    + (1 + 1 + 1 + 16) + (1 + 1 + 1 + 8) + (1 + 1 + 1 + 8); i++) {
+                stream.writeByte(0);
+            }
+        }
+
     }
     else if (auto deauthenticationFrame = dynamicPtrCast<const Ieee80211DeauthenticationFrame>(chunk))
     {
@@ -77,6 +93,15 @@ void Ieee80211MgmtFrameSerializer::serialize(MemoryOutputStream& stream, const P
             // rate |= 0x80 if rate contained in the BSSBasicRateSet parameter
             stream.writeByte(rate);
         }
+
+        //Broadcast ProbeRequest
+        if (probeRequestFrame->getBssIds().length) {
+            //AttributeID(1)+Length(1)+bssIdList(6*length)
+            for ( int i = 0; i <  (1+1+6*probeRequestFrame->getBssIds().length); i++) {
+                stream.writeByte(0);
+            }
+        }
+
         // 3    Request information         May be included if dot11MultiDomainCapabilityEnabled is true.
         // 4    Extended Supported Rates    The Extended Supported Rates element is present whenever there are more than eight supported rates, and it is optional otherwise.
         // Last Vendor Specific             One or more vendor-specific information elements may appear in this frame. This information element follows all other information elements.
@@ -102,6 +127,12 @@ void Ieee80211MgmtFrameSerializer::serialize(MemoryOutputStream& stream, const P
             uint8_t rate = ceil(supportedRates.rate[i]/0.5);
             // rate |= 0x80 if rate contained in the BSSBasicRateSet parameter
             stream.writeByte(rate);
+        }
+        //FILS
+        if (associationRequestFrame->getEnableFils()) {
+            for ( int i = 0; i < (8) + (1 + 1 + 1 + 32); i++) {
+                stream.writeByte(0);
+            }
         }
         // 5    Extended Supported Rates   The Extended Supported Rates element is present whenever there are more than eight supported rates, and it is optional otherwise.
         // 6    Power Capability           The Power Capability element shall be present if dot11SpectrumManagementRequired is true.
@@ -161,6 +192,13 @@ void Ieee80211MgmtFrameSerializer::serialize(MemoryOutputStream& stream, const P
             // rate |= 0x80 if rate contained in the BSSBasicRateSet parameter
             stream.writeByte(rate);
         }
+        //FILS
+        if (associationResponseFrame->getEnableFils()) {
+            for ( int i = 0; i < (8) + (1 + 1 + 1 + 32) + (1 + 1 + 1 + 8 + 56); i++) {
+                stream.writeByte(0);
+            }
+        }
+        stream.writeUint64Be(simTime().raw());
         // 5    Extended Supported Rates   The Extended Supported Rates element is present whenever there are more than eight supported rates, and it is optional otherwise.
         // 6    EDCA Parameter Set
         // Last Vendor Specific            One or more vendor-specific information elements may appear in this frame. This information element follows all other information elements.
@@ -189,6 +227,7 @@ void Ieee80211MgmtFrameSerializer::serialize(MemoryOutputStream& stream, const P
     }
     else if (auto beaconFrame = dynamicPtrCast<const Ieee80211BeaconFrame>(chunk))
     {
+        EV << "BeaconFrame Serialize\n";
         //type = ST_BEACON;
         // 1    Timestamp
         stream.writeUint64Be(simTime().raw());   //FIXME
@@ -211,6 +250,15 @@ void Ieee80211MgmtFrameSerializer::serialize(MemoryOutputStream& stream, const P
             // rate |= 0x80 if rate contained in the BSSBasicRateSet parameter
             stream.writeByte(rate);
         }
+        // 6    FILS Indication element(4byte)
+        stream.writeUint32Be(beaconFrame->getEnableFils());
+
+#if 0
+        // 6    dummy(unsigned short) test for FILS
+        stream.writeByte(114);//Mesh ID
+        stream.writeByte(2);//Length
+        stream.writeUint16Be(beaconFrame->getDummy());
+#endif
         // 6    Frequency-Hopping (FH) Parameter Set   The FH Parameter Set information element is present within Beacon frames generated by STAs using FH PHYs.
         // 7    DS Parameter Set                       The DS Parameter Set information element is present within Beacon frames generated by STAs using Clause 15, Clause 18, and Clause 19 PHYs.
         // 8    CF Parameter Set                       The CF Parameter Set information element is present only within Beacon frames generated by APs supporting a PCF.
@@ -231,6 +279,26 @@ void Ieee80211MgmtFrameSerializer::serialize(MemoryOutputStream& stream, const P
         // 23   EDCA Parameter Set                     The EDCA Parameter Set element is present when dot11QosOptionImplemented is true and the QoS Capability element is not present.
         // 24   QoS Capability                         The QoS Capability element is present when dot11QosOption- Implemented is true and EDCA Parameter Set element is not present.
         // Last Vendor Specific                        One or more vendor-specific information elements may appear in this frame. This information element follows all other information elements.
+    }
+    else if (auto filsFrame = dynamicPtrCast<const Ieee80211FilsDiscoveryFrame>(chunk))
+    {
+        EV << "MgmtFrame:Serializer:Ieee80211FilsDiscoveryFrame" << endl;
+        //type = ST_ACTION
+        stream.writeByte(26);//category FILS
+        stream.writeByte(34);//PublicAction:FILS Discovery
+        // 1 FILS Discovery Information field
+        // 1-1 FILS Discovery Frame Control
+        stream.writeUint16Be(0);//dummy
+        // 1-2 Timestamp
+        stream.writeUint64Be(simTime().raw());   //FIXME
+        // 1-3 Beacon Interval
+        stream.writeUint16Be((uint16_t)(filsFrame->getBeaconInterval().inUnit(SIMTIME_US)/1024));
+        // 1-4 SSID/Short SSID
+        const char *SSID = filsFrame->getSSID();
+        unsigned int length = strlen(SSID);
+        stream.writeByte(0);    //FIXME
+        stream.writeByte(length);
+        stream.writeBytes((uint8_t *)SSID, B(length));
     }
     else if (auto probeResponseFrame = dynamicPtrCast<const Ieee80211ProbeResponseFrame>(chunk))
     {
@@ -282,12 +350,18 @@ void Ieee80211MgmtFrameSerializer::serialize(MemoryOutputStream& stream, const P
 
 const Ptr<Chunk> Ieee80211MgmtFrameSerializer::deserialize(MemoryInputStream& stream) const
 {
+    EV << "Ieee80211MgmtFrameSerializer::deserialize\n";
     switch(0) // TODO: receive and dispatch on type_info parameter
     {
         case 0xB0: // ST_AUTHENTICATION
         {
             auto frame = makeShared<Ieee80211AuthenticationFrame>();
-            stream.readUint16Be();
+            // 1    Authentication algorithm number
+            if (4 == stream.readUint16Be()) { //FILS Shared Key authentication without PFS
+                frame->setEnableFils(1);
+            } else {
+                frame->setEnableFils(0);//open system
+            }
             frame->setSequenceNumber(stream.readUint16Be());
             frame->setStatusCode((Ieee80211StatusCode)stream.readUint16Be());
             return frame;
@@ -426,6 +500,37 @@ const Ptr<Chunk> Ieee80211MgmtFrameSerializer::deserialize(MemoryInputStream& st
             for (int i = 0; i < supRat.numRates; i++)
                 supRat.rate[i] = (double)(stream.readByte() & 0x7F) * 0.5;
             frame->setSupportedRates(supRat);
+
+            // #3.15 BSS Load
+            stream.readByte(); // Element ID
+            stream.readByte(); // Length
+            Ieee80211BssLoadElement bssLoad;
+            bssLoad.stationCount = stream.readUint16Be();
+            frame->setBssLoad(bssLoad);
+            return frame;
+        }
+
+        case 0xd0: // ST_ACTION(FILS Discovery)
+        {
+            auto frame = makeShared<Ieee80211FilsDiscoveryFrame>();
+            // Category FILS, PublicAction:FILS Discovery
+            stream.readUint16Be();
+            // 1 FILS Discovery Frame Control
+            //1-1 FILS Discovery Frame Control
+            stream.readUint16Be();
+            //1-2 Time stamp
+            simtime_t timetstamp;
+            timetstamp.setRaw(stream.readUint64Be()); // TODO: store timestamp
+            //1-3 Beacon Interval
+            frame->setBeaconInterval(SimTime((int64_t)stream.readUint16Be()*1024, SIMTIME_US));
+            //1-4 SSID/Short SSID
+            char SSID[256];
+            stream.readByte();
+            unsigned int length = stream.readByte();
+            stream.readBytes((uint8_t *)SSID, B(length));
+            SSID[length] = '\0';
+            frame->setSSID(SSID);
+
             return frame;
         }
 
@@ -452,6 +557,12 @@ const Ptr<Chunk> Ieee80211MgmtFrameSerializer::deserialize(MemoryInputStream& st
             for (int i = 0; i < supRat.numRates; i++)
                 supRat.rate[i] = (double)(stream.readByte() & 0x7F) * 0.5;
             frame->setSupportedRates(supRat);
+            // #3.15 BSS Load
+            stream.readByte(); // Element ID
+            stream.readByte(); // Length
+            Ieee80211BssLoadElement bssLoad;
+            bssLoad.stationCount = stream.readUint16Be();
+            frame->setBssLoad(bssLoad);
             return frame;
         }
 

@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -23,6 +24,8 @@
 #include "inet/common/INETDefs.h"
 #include "inet/linklayer/ieee80211/mgmt/Ieee80211MgmtApBase.h"
 
+#include "inet/networklayer/ipv4/Ipv4RoutingTable.h"
+
 namespace inet {
 
 namespace ieee80211 {
@@ -43,6 +46,9 @@ class INET_API Ieee80211MgmtAp : public Ieee80211MgmtApBase, protected cListener
         int authSeqExpected;    // when NOT_AUTHENTICATED: transaction sequence number of next expected auth frame
         //int consecFailedTrans;  //XXX
         //double expiry;          //XXX association should expire after a while if STA is silent?
+        int frameAuthSeq;       //FILS
+        int enableFils = 0;
+        simtime_t authTime;  //for histogram
     };
 
     class NotificationInfoSta : public cObject
@@ -68,12 +74,33 @@ class INET_API Ieee80211MgmtAp : public Ieee80211MgmtApBase, protected cListener
     std::string ssid;
     int channelNumber = -1;
     simtime_t beaconInterval;
+    simtime_t filsDiscoveryInterval;
+    simtime_t nextBeaconTime;
     int numAuthSteps = 0;
     Ieee80211SupportedRatesElement supportedRates;
+    int enableFils = 0;
+    int filsWrappedDataLen = 8;
+    //Config histogram
+    simsignal_t assocTimesSignal = cComponent::registerSignal("assocTimes");
+    IIpv4RoutingTable *irt = nullptr; //routing table to update
+    Ipv4Route *route = nullptr;
+    int numUe;
+
+    //RSN
+    int rsnGroupDataCipherSuite;
+    int rsnPairwiseCipherSuiteCount;
+    int rsnPairwiseCipherSuiteList;
+    int rsnAkmSuiteCount;
+    int rsnAkmSuiteList;
+    int rsnCapabilities;
+    int rsnPmkidCount;
+    int rsnPmkidList;
+    int rsnGroupManagementCipherSuite;
 
     // state
     StaList staList;    ///< list of STAs
     cMessage *beaconTimer = nullptr;
+    cMessage *filsDiscoveryTimer = nullptr;
 
   public:
     Ieee80211MgmtAp() {}
@@ -101,6 +128,12 @@ class INET_API Ieee80211MgmtAp : public Ieee80211MgmtApBase, protected cListener
     /** Utility function: creates and sends a beacon frame */
     virtual void sendBeacon();
 
+    /** Utility function: creates and sends a FILS Discovery frame */
+    virtual void sendFilsDiscovery();
+
+    //FILS
+    virtual void processFrame(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& header) override;
+
     /** @name Processing of different frame types */
     //@{
     virtual void handleAuthenticationFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
@@ -113,11 +146,19 @@ class INET_API Ieee80211MgmtAp : public Ieee80211MgmtApBase, protected cListener
     virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
     virtual void handleProbeRequestFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
     virtual void handleProbeResponseFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
+    //FILS
+    virtual void handleFilsAuthReqFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header);
+    virtual void handleFilsAuthRespFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header);
+    virtual void handleFilsAssocReqFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header);
+    virtual void handleFilsAssocRespFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header);
+
     //@}
 
     void sendAssocNotification(const MacAddress& addr);
 
     void sendDisAssocNotification(const MacAddress& addr);
+
+    void setRoutingTable(MacAddress staAddr, MacAddress apAddr);
 
     /** lifecycle support */
     //@{

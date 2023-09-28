@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -51,6 +52,7 @@ class INET_API Ieee80211MgmtSta : public Ieee80211MgmtBase, protected cListener
         bool busyChannelDetected;    // during minChannelTime, we have to listen for busy channel
         simtime_t minChannelTime;    // minimum time to spend on each channel when scanning
         simtime_t maxChannelTime;    // maximum time to spend on each channel when scanning
+        std::string defaultSSID;
     };
 
     //
@@ -64,10 +66,16 @@ class INET_API Ieee80211MgmtSta : public Ieee80211MgmtBase, protected cListener
         Ieee80211SupportedRatesElement supportedRates;
         simtime_t beaconInterval;
         double rxPower;
+        double txPower;
+        Ieee80211BssLoadElement bssLoad;
+        unsigned short numAssocSta;
+
 
         bool isAuthenticated;
         int authSeqExpected;    // valid while authenticating; values: 1,3,5...
         cMessage *authTimeoutMsg;    // if non-nullptr: authentication is in progress
+
+        int enableFils;
 
         ApInfo()
         {
@@ -76,6 +84,8 @@ class INET_API Ieee80211MgmtSta : public Ieee80211MgmtBase, protected cListener
             authSeqExpected = -1;
             isAuthenticated = false;
             authTimeoutMsg = nullptr;
+            enableFils = 0;
+            numAssocSta = 0;
         }
     };
 
@@ -92,13 +102,14 @@ class INET_API Ieee80211MgmtSta : public Ieee80211MgmtBase, protected cListener
 
   protected:
     cModule *host;
-
+    InterfaceEntry *myIface = nullptr;
     // number of channels in RadioMedium -- used if we're told to scan "all" channels
     int numChannels;
 
     // scanning status
     bool isScanning;
     ScanningInfo scanning;
+    bool isProbeDelay;
 
     // ApInfo list: we collect scanning results and keep track of ongoing authentications here
     // Note: there can be several ongoing authentications simultaneously
@@ -108,6 +119,18 @@ class INET_API Ieee80211MgmtSta : public Ieee80211MgmtBase, protected cListener
     // associated Access Point
     cMessage *assocTimeoutMsg;    // if non-nullptr: association is in progress
     AssociatedApInfo assocAP;
+
+    int enableFils; //STA
+    int enableFilsAp = 0; //AP
+
+    // Config histogram
+    simsignal_t assocDuringTimeSignal = cComponent::registerSignal("assocDuringTime");
+    simsignal_t assocFinishTimeSignal = cComponent::registerSignal("assocFinishTime");
+    simsignal_t beaconLostTimeSignal = cComponent::registerSignal("beaconLostTime");
+	
+    cMessage *minChannelTime = nullptr;
+    cMessage *uniProbeReq = nullptr;
+    bool isProbeDefer = false; //Probe Request deferral flag
 
   public:
     Ieee80211MgmtSta() : host(nullptr), numChannels(-1), isScanning(false), assocTimeoutMsg(nullptr) {}
@@ -140,13 +163,16 @@ class INET_API Ieee80211MgmtSta : public Ieee80211MgmtBase, protected cListener
     virtual void changeChannel(int channelNum);
 
     /** Stores AP info received in a beacon or probe response */
-    virtual void storeAPInfo(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header, const Ptr<const Ieee80211BeaconFrame>& body);
+    virtual void storeAPInfo(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header, const Ptr<const Ieee80211BeaconFrame>& body, int overwriteEnableFils);
+
+    /** Stores AP info received in a FILS Discovery or probe response */
+    virtual void storeAPInfoFd(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header, const Ptr<const Ieee80211FilsDiscoveryFrame>& body);
 
     /** Switches to the next channel to scan; returns true if done (there wasn't any more channel to scan). */
     virtual bool scanNextChannel();
 
     /** Broadcasts a Probe Request */
-    virtual void sendProbeRequest();
+    virtual void sendProbeRequest(Ieee80211SendType sendType);
 
     /** Missed a few consecutive beacons */
     virtual void beaconLost();
@@ -162,6 +188,9 @@ class INET_API Ieee80211MgmtSta : public Ieee80211MgmtBase, protected cListener
 
     /** Utility function: Cancel the existing association */
     virtual void disassociate();
+
+    /** compare received SSID with defaultSSID **/
+    void scanConfirmSsidChk(std::string ssid);
 
     /** Utility function: sends a confirmation to the agent */
     virtual void sendConfirm(Ieee80211PrimConfirm *confirm, Ieee80211PrimResultCode resultCode);
@@ -187,6 +216,7 @@ class INET_API Ieee80211MgmtSta : public Ieee80211MgmtBase, protected cListener
     virtual void handleBeaconFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
     virtual void handleProbeRequestFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
     virtual void handleProbeResponseFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header) override;
+    virtual void handleFilsDiscoveryFrame(Packet *packet, const Ptr<const Ieee80211MgmtHeader>& header);
     //@}
 
     /** @name Processing of different agent commands */
@@ -198,6 +228,10 @@ class INET_API Ieee80211MgmtSta : public Ieee80211MgmtBase, protected cListener
     virtual void processReassociateCommand(Ieee80211Prim_ReassociateRequest *ctrl);
     virtual void processDisassociateCommand(Ieee80211Prim_DisassociateRequest *ctrl);
     //@}
+
+    /** Dispatch to frame processing methods according to frame type */
+    virtual void processFrame(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& header) override;
+
 };
 
 } // namespace ieee80211

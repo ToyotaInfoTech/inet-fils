@@ -1,6 +1,7 @@
 //
 // Copyright (C) 2006 Andras Varga
 // Copyright (C) 2001 Eric Wu and Steve Woon, Monash University, Melbourne, Australia
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -78,7 +79,12 @@ enum Ieee80211FrameType
     ST_DEAUTHENTICATION = 0x0c;
     ST_ACTION = 0x0d;
     ST_NOACKACTION = 0x0e;
-
+    //FILS
+    ST_FILS_AUTH_REQ = 0x0f;
+    ST_FILS_AUTH_RESP = 0x10;
+    ST_FILS_ASSOC_REQ = 0x11;
+    ST_FILS_ASSOC_RESP = 0x12;
+        
     // control (CFEND/CFEND_CFACK omitted):
     ST_PSPOLL = 0x1a;
     ST_RTS = 0x1b;

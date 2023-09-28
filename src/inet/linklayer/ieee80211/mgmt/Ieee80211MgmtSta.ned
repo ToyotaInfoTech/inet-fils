@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -31,9 +32,17 @@ simple Ieee80211MgmtSta like IIeee80211Mgmt
         int numChannels = default(1);  // number of channels to scan
         string mibModule;
         string macModule;               // The path to the MAC module
+        int enableFils = default(0);
         @display("i=block/cogwheel");
         @signal[l2Associated](type=inet::InterfaceEntry);
         @signal[l2BeaconLost](type=inet::InterfaceEntry);
+        //Config histogram
+        @signal[assocDuringTime](type=simtime_t; unit=s);
+        @signal[assocFinishTime](type=simtime_t; unit=s);
+        @signal[beaconLostTime](type=simtime_t; unit=s);
+        
+        @statistic[assocTime](title="[00]AssociatedTimes_STA"; source=assocDuringTime; record=histogram; unit=s; interpolationmode=none);
+        @statistic[dataProcTime](title="[00]dataProcTimes_STA"; source=beaconLostTime-assocFinishTime; record=histogram; unit=s; interpolationmode=none);
     gates:
         input macIn @labels(Ieee80211MacHeader);
         output macOut @labels(Ieee80211MacHeader);

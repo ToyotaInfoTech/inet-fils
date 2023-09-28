@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -55,7 +56,7 @@ simple Ieee80211MgmtApSimplified like IIeee80211Mgmt
     gates:
         input macIn @labels(Ieee80211MacHeader); // from ~Ieee80211Mac
         output macOut @labels(Ieee80211MacHeader); // to ~Ieee80211Mac
-        input agentIn @loose;   // unused dummy to statisfy the IIeee80211Mgmt interface
-        output agentOut @loose; // unused dummy to statisfy the IIeee80211Mgmt interface
+        input agentIn @loose;   // unused dummy to statisfy te IIeee80211Mgmt interface
+        output agentOut @loose; // unused dummy to statisfy te IIeee80211Mgmt interface
 }
 

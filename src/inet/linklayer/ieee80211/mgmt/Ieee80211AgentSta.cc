@@ -1,5 +1,6 @@
 //
 // Copyright (C) 2006 Andras Varga
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -149,6 +150,7 @@ void Ieee80211AgentSta::sendScanRequest()
     for (size_t i = 0; i < channelsToScan.size(); i++)
         req->setChannelList(i, channelsToScan[i]);
     //XXX BSSID, SSID are left at default ("any")
+    req->setDefaultSSID(defaultSsid.c_str());
 
     emit(sentRequestSignal, PR_SCAN_REQUEST);
     sendRequest(req);
@@ -207,7 +209,6 @@ void Ieee80211AgentSta::sendDisassociateRequest(const MacAddress& address, Ieee8
 void Ieee80211AgentSta::processScanConfirm(Ieee80211Prim_ScanConfirm *resp)
 {
     // choose best AP
-
     int bssIndex = -1;
     if (this->defaultSsid == "") {
         // no default ssid, so pick the best one
@@ -220,7 +221,8 @@ void Ieee80211AgentSta::processScanConfirm(Ieee80211Prim_ScanConfirm *resp)
             std::string resp_ssid = resp->getBssList(i).getSSID();
             if (resp_ssid == this->defaultSsid) {
                 EV << "found default SSID " << resp_ssid << endl;
-                bssIndex = i;
+                //bssIndex = i;
+                bssIndex = chooseBSS(resp);
                 break;
             }
         }
@@ -238,6 +240,7 @@ void Ieee80211AgentSta::processScanConfirm(Ieee80211Prim_ScanConfirm *resp)
 
     const Ieee80211Prim_BssDescription& bssDesc = resp->getBssList(bssIndex);
     EV << "Chosen AP address=" << bssDesc.getBSSID() << " from list, starting authentication\n";
+    //EV << "AP power(mw) -> RSSI(dbm)" << resp->getBssList(0).getRxPower() << "->" << math::mW2dBmW(resp->getBssList(0).getRxPower()) << "\n";
     sendAuthenticateRequest(bssDesc.getBSSID());
 }
 
@@ -252,6 +255,7 @@ void Ieee80211AgentSta::dumpAPList(Ieee80211Prim_ScanConfirm *resp)
            << " SSID=" << bssDesc.getSSID()
            << " beaconIntvl=" << bssDesc.getBeaconInterval()
            << " rxPower=" << bssDesc.getRxPower()
+           << " txPower=" << bssDesc.getTxPower()
            << endl;
         // later: supportedRates
     }
@@ -265,9 +269,12 @@ int Ieee80211AgentSta::chooseBSS(Ieee80211Prim_ScanConfirm *resp)
     // here, just choose the one with the greatest receive power
     // TODO and which supports a good data rate we support
     int bestIndex = 0;
-    for (size_t i = 0; i < resp->getBssListArraySize(); i++)
-        if (resp->getBssList(i).getRxPower() > resp->getBssList(bestIndex).getRxPower())
+    double pathloss;
+    for (size_t i = 0; i < resp->getBssListArraySize(); i++) {
+        if (resp->getBssList(i).getRxPower() > resp->getBssList(bestIndex).getRxPower()) {
             bestIndex = i;
+        }
+    }
 
     return bestIndex;
 }

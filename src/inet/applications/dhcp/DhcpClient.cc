@@ -2,6 +2,7 @@
 // Copyright (C) 2008 Juan-Carlos Maureira
 // Copyright (C) INRIA
 // Copyright (C) 2013 OpenSim Ltd.
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -52,8 +53,8 @@ void DhcpClient::initialize(int stage)
         numSent = 0;
         numReceived = 0;
         xid = 0;
-        responseTimeout = 60;    // response timeout in seconds RFC 2131, 4.4.3
-
+        responseTimeout = 4;    // response timeout in seconds in 10Mbps RFC 2131, 4.1
+        
         WATCH(numSent);
         WATCH(numReceived);
         WATCH(clientState);
@@ -682,12 +683,25 @@ void DhcpClient::handleDhcpAck(const Ptr<const DhcpMessage>& msg)
     bindLease();
 }
 
+double DhcpClient::responseTimeoutCal(void)
+{
+    //return responseTimeout; //test
+
+    int ri = intuniform(0, RAND_MAX);
+    // in responseTimeout(10Mbps) +- 1s / random
+    double rd = ( (double)(responseTimeout - 1) + ((double)ri / (RAND_MAX / 2)) )
+            / (54.0 / 10.0);
+    EV << "responseTimeoutCal:" << rd << "\n";
+    return rd;
+}
+
 void DhcpClient::scheduleTimerTO(DhcpTimerType type)
 {
     // cancel the previous timeout
-    cancelEvent(timerTo);
+    cancelEvent(timerTo); //do not reset responseTimeout
     timerTo->setKind(type);
-    scheduleAt(simTime() + responseTimeout, timerTo);
+    //scheduleAt(simTime() + responseTimeout, timerTo);
+    scheduleAt(simTime() + responseTimeoutCal(), timerTo);
 }
 
 void DhcpClient::scheduleTimerT1()

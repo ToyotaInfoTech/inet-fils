@@ -1,6 +1,7 @@
 //
 // Copyright (C) 2006 Andras Varga
 // Copyright (C) 2001 Eric Wu and Steve Woon, Monash University, Melbourne, Australia
+// Copyright (C) 2023 TOYOTA MOTOR CORPORATION. ALL RIGHTS RESERVED.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public License
@@ -104,6 +105,7 @@ enum Ieee80211StatusCode
     SC_AUTH_TIMEOUT = 16;
     SC_ASS_TOO_MANY_MS = 17;
     SC_DATARATE_UNSUP = 18;
+    SC_ASS_REJECT_BAD_POWER = 22;
     SC_AUTH_REJECT_ANTI_CLOGING = 76;
     SC_AUTH_REJECT_FINITE_CYC_GROUP_UNS = 77;
     SC_TBTT_REQUEST = 78;
@@ -125,6 +127,45 @@ struct Ieee80211SupportedRatesElement
 {
     short numRates; // number of rates (max 8)
     double rate[8]; // in Mbit/s; should be multiple of 500 kbit/s
+}
+
+//
+// Structure to store FILS KeyDelivery
+//
+struct Ieee80211KeyDelivery
+{
+	uint64_t keyRsc;
+	uint64_t kedList[7];
+}
+
+struct Ieee80211Rsn
+{
+    int rsnGroupDataCipherSuite;
+    int rsnPairwiseCipherSuiteCount;
+    int rsnPairwiseCipherSuiteList;
+    int rsnAkmSuiteCount;
+    int rsnAkmSuiteList;
+    int rsnCapabilities;
+    int rsnPmkidCount;
+    int rsnPmkidList;
+    int rsnGroupManagementCipherSuite;
+}
+
+// Structure to store Probe Suppression BSSIDs attribute
+struct Ieee80211BssIds
+{
+    int length;
+    MacAddress bssIdList[10];
+}
+
+
+//
+// Structure to store BSS Load
+struct Ieee80211BssLoadElement
+{
+    unsigned short stationCount;
+    // channelUtilization
+    // Available Admission Capacity
 }
 
 //
@@ -150,6 +191,11 @@ class Ieee80211AuthenticationFrame extends Ieee80211MgmtFrame
     unsigned short sequenceNumber;
     Ieee80211StatusCode statusCode;
     bool isLast; // not part of the standard; see above
+    int rsn;
+    int enableFils;
+    uint64_t filsNounce;
+    uint64_t filsSession;
+    simtime_t authTime; // AssociationTimes for histograme
 }
 
 //
@@ -159,6 +205,7 @@ class Ieee80211DeauthenticationFrame extends Ieee80211MgmtFrame
 {
     chunkLength = B(2);
     Ieee80211ReasonCode reasonCode;
+    int enableFils;
 }
 
 //
@@ -168,6 +215,7 @@ class Ieee80211DisassociationFrame extends Ieee80211MgmtFrame
 {
     chunkLength = B(2);
     Ieee80211ReasonCode reasonCode;
+    int enableFils;
 }
 
 //
@@ -177,6 +225,10 @@ class Ieee80211ProbeRequestFrame extends Ieee80211MgmtFrame
 {
     string SSID;
     Ieee80211SupportedRatesElement supportedRates;
+    int enableFils;
+    uint64_t filsRequestParameter;
+    int apCsn;
+    Ieee80211BssIds bssIds;
 }
 
 //
@@ -186,6 +238,8 @@ class Ieee80211AssociationRequestFrame extends Ieee80211MgmtFrame
 {
     string SSID;
     Ieee80211SupportedRatesElement supportedRates;
+    int enableFils;
+    uint64_t filsSession;
 }
 
 //
@@ -204,6 +258,10 @@ class Ieee80211AssociationResponseFrame extends Ieee80211MgmtFrame
     Ieee80211StatusCode statusCode;
     short aid;
     Ieee80211SupportedRatesElement supportedRates;
+    int enableFils;
+    uint64_t filsSession;
+    Ieee80211KeyDelivery keyDelivery;
+    simtime_t authTime; // AssociationTimes for histograme
 }
 
 //
@@ -222,7 +280,25 @@ class Ieee80211BeaconFrame extends Ieee80211MgmtFrame
     Ieee80211SupportedRatesElement supportedRates;
     simtime_t beaconInterval;
     int channelNumber;
+    Ieee80211BssLoadElement BssLoad;
     Ieee80211HandoverParameters handoverParameters;     //TODO is it a vendor-specific parameter in serializer?
+    int enableFils;
+    string reducedNeighborReport;
+    int CAGNumber;
+    uint64_t filsIndication;
+    int apCsn;
+    string differntiatedInitialLinkSetup;
+    unsigned short dummy;//test
+
+}
+
+//
+// FILS Discovery frame body format.
+//
+class Ieee80211FilsDiscoveryFrame extends Ieee80211MgmtFrame
+{
+    string	SSID;
+    simtime_t beaconInterval;
 }
 
 //
@@ -231,3 +307,4 @@ class Ieee80211BeaconFrame extends Ieee80211MgmtFrame
 class Ieee80211ProbeResponseFrame extends Ieee80211BeaconFrame
 {
 }
+
